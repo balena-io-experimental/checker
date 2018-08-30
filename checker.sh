@@ -63,7 +63,7 @@ benchinit() {
 	sleep 5
 
 	# start
-	start=$(date +%s) 
+	start=$(date +%s)
 }
 
 check_resin_network() {
@@ -474,6 +474,55 @@ packet_loss_test() {
     echo "Packet loss: $packet"
 }
 
+
+docker_image_test() {
+    # Try to fetch the manifest of a repo:tag combo, to check for the existence of that
+    # repo and tag.
+    # Currently only works with v2 registries
+    # The return value is "no" if can't access that manifest, and "yes" if we can find it
+    local REGISTRY=$1
+    local REPO=$2
+    local TAG=$3
+    local exists=no
+    local REGISTRY_URL="https://${REGISTRY}/v2"
+    local MANIFEST="${REGISTRY_URL}/${REPO}/manifests/${TAG}"
+    local response
+
+    # Check
+    response=$(curl --write-out "%{http_code}" --silent --output /dev/null "${MANIFEST}")
+    if [ "$response" = 401 ]; then
+        # 401 is "Unauthorized", have to grab the access tokens from the provided endpoint
+        local auth_header
+        local realm
+        local service
+        local scope
+        local token
+        local response_auth
+        auth_header=$(curl -I --silent "${MANIFEST}" |grep -i www-authenticate)
+        # The auth_header looks as
+        # Www-Authenticate: Bearer realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:resin/resinos:pull"
+        # shellcheck disable=SC2001
+        realm=$(echo "$auth_header" | sed 's/.*realm="\([^,]*\)",.*/\1/' )
+        # shellcheck disable=SC2001
+        service=$(echo "$auth_header" | sed 's/.*,service="\([^,]*\)",.*/\1/' )
+        # shellcheck disable=SC2001
+        scope=$(echo "$auth_header" | sed 's/.*,scope="\([^,]*\)".*/\1/' )
+        # Grab the token from the appropriate address, and retry the manifest query with that
+        token=$(curl --silent "${realm}?service=${service}&scope=${scope}" | jq -r '.access_token // .token')
+        response_auth=$(curl --write-out "%{http_code}" --silent --output /dev/null -H "Authorization: Bearer ${token}" "${MANIFEST}")
+        if [ "$response_auth" = 200 ]; then
+            exists=yes
+        fi
+    elif [ "$response" = 200 ]; then
+        exists=yes
+    fi
+    if [ "${exists}" = "yes" ]; then
+		echo "Docker image successfully queried"
+	else
+		echo "Docker image COULD NOT be queried successfully"
+	fi
+}
+
 cleanup() {
 	rm -f test_file_*;
 	rm -f speedtest.py;
@@ -489,10 +538,12 @@ bench_all(){
 	next;
 	print_speedtest;
 	next;
-    check_resin_network;
-    next;
-    packet_loss_test;
-    next;
+	check_resin_network;
+	next;
+	packet_loss_test;
+	next;
+	docker_image_test registry.hub.docker.com resin/resinos 2.13.6_rev1-raspberrypi3;
+	next;
 	print_end_time;
 	next;
 	get_system_info;

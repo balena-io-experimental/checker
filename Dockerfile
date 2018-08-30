@@ -1,6 +1,6 @@
 FROM resin/intel-nuc-debian:stretch
 
-RUN apt-get update && apt-get install -yq wget curl nmap python smartmontools
+RUN apt-get update && apt-get install -yq wget curl nmap python smartmontools jq
 
 COPY . .
 
